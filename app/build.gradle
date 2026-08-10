@@ -4,16 +4,15 @@ plugins {
 
 android {
     namespace 'com.alex.voiceassistent'
-    compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
+    compileSdk 36
+    aaptOptions {
+        noCompress "tflite", "lite"
     }
 
     defaultConfig {
         applicationId "com.alex.voiceassistent"
         minSdk 29
-        targetSdk 36
+        targetSdk 34
         versionCode 1
         versionName "1.0"
 
@@ -37,7 +36,10 @@ dependencies {
     implementation libs.appcompat
     implementation libs.constraintlayout
     implementation libs.material
+    implementation 'com.alphacephei:vosk-android:0.3.70'
+    implementation 'net.java.dev.jna:jna:5.13.0@aar'
     testImplementation libs.junit
     androidTestImplementation libs.espresso.core
     androidTestImplementation libs.ext.junit
+
 }

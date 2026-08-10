@@ -1,24 +1,190 @@
 package com.alex.voiceassistent;
 
+import android.Manifest;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
+import android.widget.Button;
+import android.widget.TextView;
+import android.widget.Toast;
 
-import androidx.activity.EdgeToEdge;
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.graphics.Insets;
-import androidx.core.view.ViewCompat;
-import androidx.core.view.WindowInsetsCompat;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
-public class MainActivity extends AppCompatActivity {
+import org.json.JSONException;
+import org.json.JSONObject;
+import org.vosk.Model;
+import org.vosk.Recognizer;
+import org.vosk.android.RecognitionListener;
+import org.vosk.android.SpeechService;
+import org.vosk.android.StorageService;
+
+import java.io.IOException;
+
+public class MainActivity extends AppCompatActivity implements RecognitionListener {
+
+    private static final int PERMISSIONS_REQUEST_RECORD_AUDIO = 1;
+
+    private Model model;
+    private SpeechService speechService;
+
+    private TextView statusText;
+    private TextView resultText;
+    private Button startButton;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        EdgeToEdge.enable(this);
         setContentView(R.layout.activity_main);
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main), (v, insets) -> {
-            Insets systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
-            v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom);
-            return insets;
-        });
+
+        statusText = findViewById(R.id.statusText);
+        resultText = findViewById(R.id.resultText);
+        startButton = findViewById(R.id.startButton);
+
+        startButton.setOnClickListener(v -> toggleListening());
+
+        // Запрашиваем разрешение на микрофон перед инициализацией модели
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this,
+                    new String[]{Manifest.permission.RECORD_AUDIO},
+                    PERMISSIONS_REQUEST_RECORD_AUDIO);
+        } else {
+            initModel();
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
+                                           @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == PERMISSIONS_REQUEST_RECORD_AUDIO) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                initModel();
+            } else {
+                statusText.setText("Нет разрешения на микрофон");
+                Toast.makeText(this, "Без доступа к микрофону приложение работать не может", Toast.LENGTH_LONG).show();
+            }
+        }
+    }
+
+    /**
+     * Распаковывает модель из assets/model-ru в filesDir (один раз при первом запуске,
+     * дальше StorageService сам проверяет — распаковывать заново не будет).
+     */
+    private void initModel() {
+        statusText.setText("Распаковка модели...");
+        StorageService.unpack(this, "model-ru", "model",
+                (unpackedModel) -> {
+                    model = unpackedModel;
+                    statusText.setText("Модель готова");
+                    startButton.setEnabled(true);
+                },
+                (exception) -> {
+                    statusText.setText("Ошибка загрузки модели: " + exception.getMessage());
+                });
+    }
+
+    private void toggleListening() {
+        if (speechService != null) {
+            // Остановить прослушивание
+            speechService.stop();
+            speechService = null;
+            startButton.setText("🎤 Начать слушать");
+            statusText.setText("Остановлено");
+        } else {
+            startListening();
+        }
+    }
+
+    private void startListening() {
+        if (model == null) {
+            Toast.makeText(this, "Модель ещё не загружена", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try {
+            Recognizer recognizer = new Recognizer(model, 16000.0f);
+
+            speechService = new SpeechService(recognizer, 16000.0f);
+            speechService.startListening(this); // this = RecognitionListener (реализован ниже)
+
+            startButton.setText("⏹ Остановить");
+            statusText.setText("Слушаю...");
+        } catch (IOException e) {
+            statusText.setText("Ошибка запуска распознавания: " + e.getMessage());
+        }
+    }
+
+    // ---------- RecognitionListener callbacks ----------
+
+    @Override
+    public void onPartialResult(String hypothesis) {
+        // Приходит по мере произнесения фразы, до финального результата.
+        // JSON вида: {"partial" : "напомни через"}
+        String text = extractField(hypothesis, "partial");
+        if (text != null && !text.isEmpty()) {
+            runOnUiThread(() -> resultText.setText(text + " …"));
+        }
+    }
+
+    @Override
+    public void onResult(String hypothesis) {
+        // Финальный результат по завершении фразы (пауза в речи).
+        // JSON вида: {"text" : "напомни через полчаса купить хлеб"}
+        String text = extractField(hypothesis, "text");
+        if (text != null && !text.isEmpty()) {
+            runOnUiThread(() -> {
+                resultText.setText(text);
+                handleRecognizedCommand(text);
+            });
+        }
+    }
+
+    @Override
+    public void onFinalResult(String hypothesis) {
+        // Вызывается при остановке распознавания (speechService.stop())
+    }
+
+    @Override
+    public void onError(Exception exception) {
+        runOnUiThread(() -> statusText.setText("Ошибка распознавания: " + exception.getMessage()));
+    }
+
+    @Override
+    public void onTimeout() {
+        runOnUiThread(() -> statusText.setText("Таймаут — тишина слишком долго"));
+    }
+
+    /**
+     * Вытаскивает поле из JSON-ответа Vosk без лишних библиотек.
+     */
+    private String extractField(String json, String field) {
+        try {
+            JSONObject obj = new JSONObject(json);
+            return obj.optString(field, "");
+        } catch (JSONException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Точка, куда дальше подключится regex-парсер даты/времени и запись в CalendarContract.
+     */
+    private void handleRecognizedCommand(String text) {
+        // TODO: сюда воткнём DateTimeParser + CalendarWriter на следующем шаге
+        statusText.setText("Распознано: готово к парсингу");
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        if (speechService != null) {
+            speechService.stop();
+            speechService.shutdown();
+        }
+        if (model != null) {
+            model.close();
+        }
     }
 }
