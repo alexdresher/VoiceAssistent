@@ -9,6 +9,9 @@ import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
@@ -28,7 +31,7 @@ public class MainActivity extends AppCompatActivity implements RecognitionListen
 
     private static final int PERMISSIONS_REQUEST_RECORD_AUDIO = 1;
 
-    private static final long SILENCE_TIMEOUT_MS = 2000; // 3 секунды тишины
+    private static final long SILENCE_TIMEOUT_MS = 3000; // 3 секунды тишины
 
     private Model model;
     private SpeechService speechService;
@@ -51,14 +54,32 @@ public class MainActivity extends AppCompatActivity implements RecognitionListen
 
         startButton.setOnClickListener(v -> toggleListening());
 
-        // Запрашиваем разрешение на микрофон перед инициализацией модели
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-                != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this,
-                    new String[]{Manifest.permission.RECORD_AUDIO},
-                    PERMISSIONS_REQUEST_RECORD_AUDIO);
-        } else {
+        requestRequiredPermissions();
+    }
+
+    /**
+     * Запрашивает все нужные приложению опасные разрешения одним диалогом:
+     * микрофон (для Vosk) и календарь (для записи напоминаний).
+     */
+    private void requestRequiredPermissions() {
+        List<String> missing = new ArrayList<>();
+        String[] required = {
+                Manifest.permission.RECORD_AUDIO,
+                Manifest.permission.WRITE_CALENDAR,
+                Manifest.permission.READ_CALENDAR
+        };
+        for (String permission : required) {
+            if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
+                missing.add(permission);
+            }
+        }
+
+        if (missing.isEmpty()) {
             initModel();
+        } else {
+            ActivityCompat.requestPermissions(this,
+                    missing.toArray(new String[0]),
+                    PERMISSIONS_REQUEST_RECORD_AUDIO);
         }
     }
 
@@ -67,11 +88,18 @@ public class MainActivity extends AppCompatActivity implements RecognitionListen
                                            @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == PERMISSIONS_REQUEST_RECORD_AUDIO) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            boolean allGranted = grantResults.length > 0;
+            for (int result : grantResults) {
+                if (result != PackageManager.PERMISSION_GRANTED) {
+                    allGranted = false;
+                    break;
+                }
+            }
+            if (allGranted) {
                 initModel();
             } else {
-                statusText.setText("Нет разрешения на микрофон");
-                Toast.makeText(this, "Без доступа к микрофону приложение работать не может", Toast.LENGTH_LONG).show();
+                statusText.setText("Нужны разрешения на микрофон и календарь");
+                Toast.makeText(this, "Без этих разрешений приложение работать не может", Toast.LENGTH_LONG).show();
             }
         }
     }
@@ -136,7 +164,7 @@ public class MainActivity extends AppCompatActivity implements RecognitionListen
      */
     private void stopListeningDueToSilence() {
         if (speechService != null) {
-            stopListening("Тишина 2 сек — остановлено");
+            stopListening("Тишина 3 сек — остановлено");
         }
     }
 
@@ -211,11 +239,24 @@ public class MainActivity extends AppCompatActivity implements RecognitionListen
     }
 
     /**
-     * Точка, куда дальше подключится regex-парсер даты/времени и запись в CalendarContract.
+     * Разбирает распознанную фразу и, если она соответствует шаблону
+     * "напомни через ... [текст]", создаёт событие в системном календаре.
      */
     private void handleRecognizedCommand(String text) {
-        // TODO: сюда воткнём DateTimeParser + CalendarWriter на следующем шаге
-        statusText.setText("Распознано: готово к парсингу");
+        ReminderParser.ParseResult result = ReminderParser.parse(text);
+
+        if (result == null) {
+            statusText.setText("Не похоже на команду напоминания");
+            return;
+        }
+
+        boolean success = CalendarHelper.addReminderEvent(this, result.taskText, result.totalMinutes);
+
+        if (success) {
+            statusText.setText("Добавлено: \"" + result.taskText + "\" через " + result.totalMinutes + " мин.");
+        } else {
+            statusText.setText("Ошибка записи в календарь");
+        }
     }
 
     @Override
