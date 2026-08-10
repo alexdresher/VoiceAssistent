@@ -3,6 +3,8 @@ package com.alex.voiceassistent;
 import android.Manifest;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -26,12 +28,17 @@ public class MainActivity extends AppCompatActivity implements RecognitionListen
 
     private static final int PERMISSIONS_REQUEST_RECORD_AUDIO = 1;
 
+    private static final long SILENCE_TIMEOUT_MS = 2000; // 3 секунды тишины
+
     private Model model;
     private SpeechService speechService;
 
     private TextView statusText;
     private TextView resultText;
     private Button startButton;
+
+    private final Handler silenceHandler = new Handler(Looper.getMainLooper());
+    private final Runnable silenceRunnable = this::stopListeningDueToSilence;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -88,11 +95,8 @@ public class MainActivity extends AppCompatActivity implements RecognitionListen
 
     private void toggleListening() {
         if (speechService != null) {
-            // Остановить прослушивание
-            speechService.stop();
-            speechService = null;
-            startButton.setText("🎤 Начать слушать");
-            statusText.setText("Остановлено");
+            // Ручная остановка пользователем
+            stopListening("Остановлено");
         } else {
             startListening();
         }
@@ -111,9 +115,43 @@ public class MainActivity extends AppCompatActivity implements RecognitionListen
 
             startButton.setText("⏹ Остановить");
             statusText.setText("Слушаю...");
+
+            resetSilenceTimer();
         } catch (IOException e) {
             statusText.setText("Ошибка запуска распознавания: " + e.getMessage());
         }
+    }
+
+    /**
+     * Сбрасывает таймер тишины и запускает заново — вызывается при любой голосовой активности
+     * (partial или final результат).
+     */
+    private void resetSilenceTimer() {
+        silenceHandler.removeCallbacks(silenceRunnable);
+        silenceHandler.postDelayed(silenceRunnable, SILENCE_TIMEOUT_MS);
+    }
+
+    /**
+     * Останавливает прослушивание по причине истечения таймера тишины (3 секунды без речи).
+     */
+    private void stopListeningDueToSilence() {
+        if (speechService != null) {
+            stopListening("Тишина 2 сек — остановлено");
+        }
+    }
+
+    /**
+     * Единая точка остановки прослушивания — используется и при ручной остановке,
+     * и при срабатывании таймера тишины.
+     */
+    private void stopListening(String statusMessage) {
+        silenceHandler.removeCallbacks(silenceRunnable);
+        if (speechService != null) {
+            speechService.stop();
+            speechService = null;
+        }
+        startButton.setText("🎤 Начать слушать");
+        statusText.setText(statusMessage);
     }
 
     // ---------- RecognitionListener callbacks ----------
@@ -124,7 +162,10 @@ public class MainActivity extends AppCompatActivity implements RecognitionListen
         // JSON вида: {"partial" : "напомни через"}
         String text = extractField(hypothesis, "partial");
         if (text != null && !text.isEmpty()) {
-            runOnUiThread(() -> resultText.setText(text + " …"));
+            runOnUiThread(() -> {
+                resultText.setText(text + " …");
+                resetSilenceTimer(); // есть речь — откладываем автоостановку ещё на 3 сек
+            });
         }
     }
 
@@ -136,6 +177,7 @@ public class MainActivity extends AppCompatActivity implements RecognitionListen
         if (text != null && !text.isEmpty()) {
             runOnUiThread(() -> {
                 resultText.setText(text);
+                resetSilenceTimer(); // тоже считается активностью — таймер начинается заново
                 handleRecognizedCommand(text);
             });
         }
@@ -179,6 +221,7 @@ public class MainActivity extends AppCompatActivity implements RecognitionListen
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        silenceHandler.removeCallbacks(silenceRunnable);
         if (speechService != null) {
             speechService.stop();
             speechService.shutdown();
