@@ -112,7 +112,7 @@ public class CalendarHelper {
         return primaryId != -1 ? primaryId : fallbackId;
     }
 
-    private static final String TARGET_ACCOUNT_NAME = "alex.dresher@gmail.com";
+    private static final String TARGET_ACCOUNT_NAME = "alexdresher@gmail.com";
     private static long getCalendarId(Context context) {
         String[] projection = {
                 CalendarContract.Calendars._ID,
@@ -133,7 +133,7 @@ public class CalendarHelper {
 
         while (cursor != null && cursor.moveToNext()) {
             String calendarName=cursor.getString(cursor.getColumnIndexOrThrow(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME));
-            if (calendarName.equals("alex.dresher@gmail.com")) {
+            if (calendarName.equals("alexdresher@gmail.com")) {
                 long calendarId = cursor.getLong(cursor.getColumnIndexOrThrow(CalendarContract.Calendars._ID));
                 cursor.close();
                 return calendarId;
