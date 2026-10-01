@@ -110,15 +110,23 @@ public class MainActivity extends AppCompatActivity implements RecognitionListen
      */
     private void initModel() {
         statusText.setText("Распаковка модели...");
-        StorageService.unpack(this, "model-ru", "model",
-                (unpackedModel) -> {
-                    model = unpackedModel;
+        VoskModelManager.getInstance().init(this, new VoskModelManager.OnInitListener() {
+            @Override
+            public void onReady(Model readyModel) {
+                model = readyModel;
+                runOnUiThread(() -> {
                     statusText.setText("Модель готова");
                     startButton.setEnabled(true);
-                },
-                (exception) -> {
-                    statusText.setText("Ошибка загрузки модели: " + exception.getMessage());
                 });
+            }
+
+            @Override
+            public void onError(Exception exception) {
+                runOnUiThread(() ->
+                        statusText.setText("Ошибка загрузки модели: " + exception.getMessage())
+                );
+            }
+        });
     }
 
     private void toggleListening() {
@@ -136,10 +144,14 @@ public class MainActivity extends AppCompatActivity implements RecognitionListen
             return;
         }
         try {
+
             Recognizer recognizer = new Recognizer(model, 16000.0f);
 
             speechService = new SpeechService(recognizer, 16000.0f);
             speechService.startListening(this); // this = RecognitionListener (реализован ниже)
+
+            //очищаем распознанный текст
+            resultText.setText("");
 
             startButton.setText("⏹ Остановить");
             statusText.setText("Слушаю...");
