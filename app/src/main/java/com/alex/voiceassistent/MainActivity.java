@@ -144,7 +144,6 @@ public class MainActivity extends AppCompatActivity implements RecognitionListen
             return;
         }
         try {
-
             Recognizer recognizer = new Recognizer(model, 16000.0f);
 
             speechService = new SpeechService(recognizer, 16000.0f);
@@ -157,6 +156,7 @@ public class MainActivity extends AppCompatActivity implements RecognitionListen
             statusText.setText("Слушаю...");
 
             resetSilenceTimer();
+
         } catch (IOException e) {
             statusText.setText("Ошибка запуска распознавания: " + e.getMessage());
         }
