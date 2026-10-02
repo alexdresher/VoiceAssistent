@@ -9,31 +9,37 @@ import android.util.Log;
 import android.view.View;
 import android.widget.TextView;
 
-import com.alex.voiceassistent.CalendarHelper;
 import com.alex.voiceassistent.R;
 import com.alex.voiceassistent.ReminderParser;
+import com.alex.voiceassistent.TaskIntentHelper;
 import com.alex.voiceassistent.VoskModelManager;
 
-import org.json.JSONException;
 import org.json.JSONObject;
 import org.vosk.Model;
 import org.vosk.Recognizer;
 import org.vosk.android.RecognitionListener;
 import org.vosk.android.SpeechService;
 
-import java.io.IOException;
-
 public class MyVoiceInteractionSession extends VoiceInteractionSession implements RecognitionListener {
 
     private static final String TAG = "VoiceSession";
-    private static final long SILENCE_TIMEOUT_MS = 3000;
+    private static final long SILENCE_TIMEOUT_MS = 3000L;
+
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private SpeechService speechService;
+    private Recognizer recognizer;
 
     private TextView tvStatus;
     private TextView tvResult;
-    private SpeechService speechService;
+    private boolean isProcessingCommand = false;
 
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private final Runnable silenceRunnable = this::stopAndDismiss;
+    private final Runnable silenceTimeoutRunnable = () -> {
+        Log.d(TAG, "Silence timeout - hiding session");
+        if (tvStatus != null) {
+            tvStatus.setText("Время ожидания истекло");
+        }
+        mainHandler.postDelayed(this::safeHide, 400);
+    };
 
     public MyVoiceInteractionSession(Context context) {
         super(context);
@@ -50,96 +56,121 @@ public class MyVoiceInteractionSession extends VoiceInteractionSession implement
     @Override
     public void onShow(Bundle args, int showFlags) {
         super.onShow(args, showFlags);
+        Log.d(TAG, "onShow called");
 
-        tvStatus.setText("Инициализация...");
-        tvResult.setText("");
+        mainHandler.removeCallbacksAndMessages(null);
+        isProcessingCommand = false;
 
-        // Получаем модель и сразу стартуем распознавание
-        VoskModelManager.getInstance().init(getContext(), new VoskModelManager.OnInitListener() {
-            @Override
-            public void onReady(Model model) {
-                mainHandler.post(() -> startListening(model));
-            }
+        if (tvStatus != null) tvStatus.setText("Слушаю вас...");
+        if (tvResult != null) tvResult.setText("");
 
-            @Override
-            public void onError(Exception e) {
-                mainHandler.post(() -> tvStatus.setText("Ошибка модели: " + e.getMessage()));
-            }
-        });
-    }
+        // Даем 200 мс форы аудиосистеме Android на полное освобождение микрофона,
+        // затем запускаем распознавание без блокировки главного потока
+        mainHandler.postDelayed(this::startRecognitionAsync, 200L);
 
-    private void startListening(Model model) {
-        try {
-            Recognizer recognizer = new Recognizer(model, 16000.0f);
-            speechService = new SpeechService(recognizer, 16000.0f);
-            speechService.startListening(this);
-
-            tvStatus.setText("Слушаю...");
-            resetSilenceTimer();
-        } catch (IOException e) {
-            Log.e(TAG, "Failed to start speech service", e);
-            tvStatus.setText("Ошибка микрофона");
-        }
-    }
-
-    private void resetSilenceTimer() {
-        mainHandler.removeCallbacks(silenceRunnable);
-        mainHandler.postDelayed(silenceRunnable, SILENCE_TIMEOUT_MS);
-    }
-
-    private void stopAndDismiss() {
-        cleanup();
-        // Закрываем оверлей ассистента с экрана
-        hide();
-    }
-
-    private void cleanup() {
-        mainHandler.removeCallbacks(silenceRunnable);
-        if (speechService != null) {
-            speechService.stop();
-            speechService.shutdown();
-            speechService = null;
-        }
+        resetSilenceTimer(4000L);
     }
 
     @Override
     public void onHide() {
         super.onHide();
-        cleanup();
+        Log.d(TAG, "onHide called");
+        stopAndReleaseVosk(); // Полностью гасим микрофон и освобождаем железо
     }
 
-    // ---------- Vosk RecognitionListener ----------
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        Log.d(TAG, "onDestroy called");
+        mainHandler.removeCallbacksAndMessages(null);
+        stopAndReleaseVosk();
+    }
+
+    // ----------------------------------------------------
+    // Управление потоком и микрофоном
+    // ----------------------------------------------------
+
+    private void startRecognitionAsync() {
+        stopAndReleaseVosk(); // Гасим старый хвост, если остался
+
+        Model model = VoskModelManager.getInstance().getModel();
+        if (model == null) {
+            Log.e(TAG, "Model is null in VoskModelManager");
+            if (tvStatus != null) tvStatus.setText("Модель не загружена");
+            return;
+        }
+
+        try {
+            recognizer = new Recognizer(model, 16000.0f);
+            speechService = new SpeechService(recognizer, 16000.0f);
+            speechService.startListening(this);
+            Log.d(TAG, "Vosk microphone started successfully");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to start SpeechService", e);
+            if (tvStatus != null) tvStatus.setText("Ошибка микрофона");
+        }
+    }
+
+    private void stopAndReleaseVosk() {
+        mainHandler.removeCallbacksAndMessages(silenceTimeoutRunnable);
+        if (speechService != null) {
+            try {
+                speechService.stop();
+                speechService.shutdown();
+            } catch (Exception e) {
+                Log.w(TAG, "Error stopping SpeechService", e);
+            }
+            speechService = null;
+        }
+        recognizer = null;
+        Log.d(TAG, "Vosk stopped and microphone released");
+    }
+
+    private void safeHide() {
+        isProcessingCommand = false;
+        stopAndReleaseVosk();
+        hide(); // Скрываем шторку, микрофон полностью выключен на уровне ОС
+    }
+
+    private void resetSilenceTimer(long timeoutMs) {
+        mainHandler.removeCallbacks(silenceTimeoutRunnable);
+        mainHandler.postDelayed(silenceTimeoutRunnable, timeoutMs);
+    }
+
+    // ----------------------------------------------------
+    // RecognitionListener Callbacks
+    // ----------------------------------------------------
 
     @Override
     public void onPartialResult(String hypothesis) {
+        if (isProcessingCommand) return;
+
         String partial = extractField(hypothesis, "partial");
-        if (partial != null && !partial.isEmpty()) {
+        if (!partial.isEmpty()) {
             mainHandler.post(() -> {
-                tvResult.setText(partial + " …");
-                resetSilenceTimer();
+                if (tvResult != null) tvResult.setText(partial);
+                resetSilenceTimer(SILENCE_TIMEOUT_MS);
             });
         }
     }
 
     @Override
     public void onResult(String hypothesis) {
+        if (isProcessingCommand) return;
+
         String text = extractField(hypothesis, "text");
-        if (text != null && !text.isEmpty()) {
+        Log.d(TAG, "onResult: " + text);
+
+        if (!text.isEmpty()) {
+            isProcessingCommand = true;
+            mainHandler.removeCallbacks(silenceTimeoutRunnable);
+
+            // Сразу гасим микрофон при успешном распознавании команды
+            stopAndReleaseVosk();
+
             mainHandler.post(() -> {
-                tvResult.setText(text);
-                tvStatus.setText("Обработка...");
-
-                // Разбираем напоминание
-                ReminderParser.ParseResult result = ReminderParser.parse(text);
-                if (result != null) {
-                    boolean ok = CalendarHelper.addReminderEvent(getContext(), result.taskText, result.totalMinutes);
-                    tvStatus.setText(ok ? "Добавлено в календарь!" : "Ошибка календаря");
-                } else {
-                    tvStatus.setText("Команда не распознана");
-                }
-
-                // Закрываем окно ассистента через 1.5 секунды после завершения
-                mainHandler.postDelayed(this::stopAndDismiss, 1500);
+                if (tvResult != null) tvResult.setText(text);
+                processCommand(text);
             });
         }
     }
@@ -149,20 +180,34 @@ public class MyVoiceInteractionSession extends VoiceInteractionSession implement
 
     @Override
     public void onError(Exception exception) {
-        mainHandler.post(() -> tvStatus.setText("Ошибка: " + exception.getMessage()));
+        Log.e(TAG, "Vosk error", exception);
+        mainHandler.post(this::safeHide);
     }
 
     @Override
     public void onTimeout() {
-        mainHandler.post(this::stopAndDismiss);
+        mainHandler.post(this::safeHide);
+    }
+
+    private void processCommand(String text) {
+        ReminderParser.ParseResult result = ReminderParser.parse(text);
+
+        if (result != null) {
+            TaskIntentHelper.createTimedTask(getContext(), result.taskText, result.totalMinutes);
+            if (tvStatus != null) tvStatus.setText("Напоминание создано!");
+            mainHandler.postDelayed(this::safeHide, 1200);
+        } else {
+            if (tvStatus != null) tvStatus.setText("Команда не распознана");
+            mainHandler.postDelayed(this::safeHide, 1500);
+        }
     }
 
     private String extractField(String json, String field) {
         try {
             JSONObject obj = new JSONObject(json);
-            return obj.optString(field, "");
-        } catch (JSONException e) {
-            return null;
+            return obj.optString(field, "").trim();
+        } catch (Exception e) {
+            return "";
         }
     }
 }

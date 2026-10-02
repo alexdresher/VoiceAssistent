@@ -153,7 +153,7 @@ public class ReminderParser {
     private static final int FLAGS = Pattern.CASE_INSENSITIVE;
 
     private static final Pattern TRIGGER = Pattern.compile(
-            "^\\s*напомни(ть)?\\s+(мне\\s+)?", FLAGS);
+            "^\\s*напомн[а-яё]*(?:\\s+|$)(?:мне(?:\\s+|$))?", FLAGS);
 
     // "через два с половиной часа"
     private static final Pattern WITH_HALF_PATTERN = Pattern.compile(
