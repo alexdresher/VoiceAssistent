@@ -74,8 +74,12 @@ public class MyVoiceInteractionSession extends VoiceInteractionSession {
         super.onShow(args, showFlags);
         Log.i(TAG, "onShow: открытие сессии");
 
-        // КРИТИЧЕСКИЙ МОМЕНТ 1: Заставляем окно захватить системный фокус
-        if (getWindow() != null) {
+        if (getWindow() != null && getWindow().getWindow() != null) {
+            // Заставляем систему считать окно интерактивным
+            getWindow().getWindow().addFlags(
+                    android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON |
+                            android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            );
             getWindow().show();
         }
 
@@ -86,7 +90,7 @@ public class MyVoiceInteractionSession extends VoiceInteractionSession {
         if (tvStatus != null) tvStatus.setText("Запуск...");
         if (tvResult != null) tvResult.setText("");
 
-        // КРИТИЧЕСКИЙ МОМЕНТ 2: Даем ОС 250 мс подключить аудиомаршрут к нашему окну
+        // Даём ОС время переключить UID в активное состояние окна
         mainHandler.postDelayed(this::initModelAndStart, 250L);
     }
 
