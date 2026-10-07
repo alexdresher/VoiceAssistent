@@ -1,6 +1,8 @@
 package com.alex.voiceassistent;
 
 import android.Manifest;
+import android.content.ComponentName;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.os.Handler;
@@ -56,6 +58,22 @@ public class MainActivity extends AppCompatActivity implements RecognitionListen
 
         requestRequiredPermissions();
     }
+
+    /*
+    @Override
+    protected void onResume() {
+        super.onResume();
+
+        ComponentName component = new ComponentName(this, com.alex.voiceassistent.service.MyVoiceInteractionService.class);
+        boolean active = android.service.voice.VoiceInteractionService.isActiveService(this, component);
+
+        if (!active) {
+            // Если привязка упала, дергаем сервис для самовосстановления
+            Intent serviceIntent = new Intent(this, com.alex.voiceassistent.service.MyVoiceInteractionService.class);
+            startService(serviceIntent);
+        }
+    }
+     */
 
     /**
      * Запрашивает все нужные приложению опасные разрешения одним диалогом:
@@ -191,7 +209,7 @@ public class MainActivity extends AppCompatActivity implements RecognitionListen
             speechService = null;
         }
         startButton.setText("🎤 Начать слушать");
-        statusText.setText(statusMessage);
+        statusText.setText(statusText.getText() + "\n" + statusMessage);
     }
 
     // ---------- RecognitionListener callbacks ----------
@@ -264,8 +282,16 @@ public class MainActivity extends AppCompatActivity implements RecognitionListen
 
         boolean success = CalendarHelper.addReminderEvent(this, result.taskText, result.totalMinutes);
 
+        // Вычисляем время срабатывания
+        long triggerTimeMillis = System.currentTimeMillis() + (result.totalMinutes * 60L * 1000L);
+
+// Форматируем дату и время (например: "06.10 в 16:45")
+        java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("dd.MM в HH:mm", java.util.Locale.getDefault());
+        String formattedDateTime = sdf.format(new java.util.Date(triggerTimeMillis));
+
         if (success) {
-            statusText.setText("Добавлено: \"" + result.taskText + "\" через " + result.totalMinutes + " мин.");
+            //statusText.setText("Добавлено: \"" + result.taskText + "\" через " + result.totalMinutes + " мин.");
+            statusText.setText("Добавлено: \"" + result.taskText + "\" " + formattedDateTime);
         } else {
             statusText.setText("Ошибка записи в календарь");
         }

@@ -362,9 +362,16 @@ public class MyVoiceInteractionSession extends VoiceInteractionSession {
 
         boolean success = CalendarHelper.addReminderEvent(getContext(), result.taskText, result.totalMinutes);
 
+        long triggerTimeMillis = System.currentTimeMillis() + (result.totalMinutes * 60L * 1000L);
+
+        // Форматируем дату и время (например: "06.10 в 16:45")
+        java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("dd.MM в HH:mm", java.util.Locale.getDefault());
+        String formattedDateTime = sdf.format(new java.util.Date(triggerTimeMillis));
+
         if (success) {
             if (tvStatus != null) {
-                tvStatus.setText("Добавлено: \"" + result.taskText + "\" через " + result.totalMinutes + " мин.");
+                //tvStatus.setText("Добавлено: \"" + result.taskText + "\" через " + result.totalMinutes + " мин.");
+                tvStatus.setText("Добавлено: \"" + result.taskText + "\" " + formattedDateTime);
             }
             mainHandler.postDelayed(this::finish, 1400L);
         } else {
