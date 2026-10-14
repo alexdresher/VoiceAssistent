@@ -210,55 +210,43 @@ public class ReminderParser {
         DateOffsetResult dateInfo = extractDateOffset(afterTrigger);
         String afterDate = dateInfo.remainder;
 
-        // ------------------------------------------------------------------
-        // 2. ВЕТКА ТОЧНОГО ВРЕМЕНИ: "в 13:45" или "в тринадцать сорок пять"
-        // ------------------------------------------------------------------
-        if (afterDate.startsWith("в ") || afterDate.startsWith("во ")) {
+        // 2.2 Словесное время ("в тринадцать сорок пять выйти на прогулку",
+//                     "в двадцать часов одну минуту выйти")
+        String afterPrep = afterDate.replaceFirst("^в[о]?\\s+", "").trim();
+        String[] words = afterPrep.split("\\s+");
 
-            // 2.1 Цифровое время ("в 13:45 выйти на прогулку")
-            Matcher digitMatcher = AT_DIGIT_TIME.matcher(afterDate);
-            if (digitMatcher.find()) {
-                int h = Integer.parseInt(digitMatcher.group(1));
-                int m = Integer.parseInt(digitMatcher.group(2));
-                int delay = calculateMinutesUntil(h, m, dateInfo);
+        StringBuilder timeWordsBuilder = new StringBuilder();
+        int splitIndex = 0;
+
+        for (int i = 0; i < words.length; i++) {
+            String w = words[i];
+            String lw = w.toLowerCase();
+
+            boolean isNumber = NUMBERS.containsKey(lw) || isNumeric(lw);
+            boolean isMarker = lw.matches("час(?:а|ов)?|минут[ауы]?");
+
+            if (isNumber || isMarker) {
+                timeWordsBuilder.append(w).append(" ");
+                splitIndex = i + 1;
+            } else {
+                break;
+            }
+        }
+
+        if (splitIndex > 0) {
+            // timeWords теперь содержит и числительные, и маркеры:
+            // например, "двадцать часов одну минуту" или "тринадцать сорок пять"
+            String timeWords = timeWordsBuilder.toString().trim();
+            int[] time = parseHourAndMinuteWords(timeWords);
+
+            if (time != null) {
+                int delay = calculateMinutesUntil(time[0], time[1], dateInfo);
                 if (delay > 0) {
-                    String task = afterDate.substring(digitMatcher.end()).trim();
-                    return buildResult(delay, task);
-                }
-            }
-
-            // 2.2 Словесное время ("в тринадцать сорок пять выйти на прогулку")
-            String afterPrep = afterDate.replaceFirst("^в[о]?\\s+", "").trim();
-            String[] words = afterPrep.split("\\s+");
-
-            StringBuilder timeWordsBuilder = new StringBuilder();
-            int splitIndex = 0;
-
-            for (int i = 0; i < words.length; i++) {
-                String w = words[i];
-                if (NUMBERS.containsKey(w) || isNumeric(w)) {
-                    timeWordsBuilder.append(w).append(" ");
-                    splitIndex = i + 1;
-                } else if (w.matches("ч?ас(?:а|ов)?|минут[уы]?")) {
-                    splitIndex = i + 1;
-                } else {
-                    break;
-                }
-            }
-
-            if (splitIndex > 0) {
-                String timeWords = timeWordsBuilder.toString().trim();
-                int[] time = parseHourAndMinuteWords(timeWords);
-
-                if (time != null) {
-                    int delay = calculateMinutesUntil(time[0], time[1], dateInfo);
-                    if (delay > 0) {
-                        StringBuilder taskBuilder = new StringBuilder();
-                        for (int i = splitIndex; i < words.length; i++) {
-                            taskBuilder.append(words[i]).append(" ");
-                        }
-                        return buildResult(delay, taskBuilder.toString().trim());
+                    StringBuilder taskBuilder = new StringBuilder();
+                    for (int i = splitIndex; i < words.length; i++) {
+                        taskBuilder.append(words[i]).append(" ");
                     }
+                    return buildResult(delay, taskBuilder.toString().trim());
                 }
             }
         }
@@ -415,30 +403,61 @@ public class ReminderParser {
         String[] words = timeStr.trim().split("\\s+");
         if (words.length == 0) return null;
 
-        // Вариант А: Одно число (например, "в тринадцать", "в пять", "в 15") -> 13:00, 05:00
-        if (words.length == 1) {
-            int h = parseNumber(words[0]);
-            if (h >= 0 && h <= 23) {
-                return new int[]{h, 0};
+        // 1. Ищем маркеры "час*" и "минут*"
+        int hourMarkerIdx = -1;
+        int minuteMarkerIdx = -1;
+        for (int i = 0; i < words.length; i++) {
+            String w = words[i].toLowerCase();
+            if (w.matches("час(?:а|ов)?")) hourMarkerIdx = i;
+            else if (w.matches("минут[ауы]?")) minuteMarkerIdx = i;
+        }
+
+        // 2. Если есть маркеры — режем по ним
+        if (hourMarkerIdx >= 0 || minuteMarkerIdx >= 0) {
+            String hourPart, minutePart;
+
+            if (hourMarkerIdx >= 0 && minuteMarkerIdx >= 0) {
+                // часы и минуты — до/между маркерами (маркеры "минута/часов" в тексте могут стоять после своих числительных)
+                int hEnd = hourMarkerIdx;             // "двадцать" перед "часов"
+                int mStart = hourMarkerIdx + 1;       // "одну" перед "минуту"
+                int mEnd = minuteMarkerIdx;           // до слова "минуту"
+                hourPart = join(words, 0, hEnd);
+                minutePart = join(words, mStart, mEnd);
+            } else if (hourMarkerIdx >= 0) {
+                // только "часов": "двадцать часов" -> 20:00;
+                // но "двадцать один час" -> 21:00 (маркер в конце)
+                // Разбираем: числительные до маркера — это часы.
+                hourPart = join(words, 0, hourMarkerIdx);
+                minutePart = "";
+            } else {
+                // только "минут": "двадцать минут" -> 0:20? часы = 0
+                hourPart = "";
+                minutePart = join(words, 0, minuteMarkerIdx);
+            }
+
+            int h = hourPart.isEmpty() ? 0 : parseNumber(hourPart);
+            int m = minutePart.isEmpty() ? 0 : parseNumber(minutePart);
+
+            if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
+                return new int[]{h, m};
             }
             return null;
         }
 
-        // Вариант Б: Два и более слов (например, "тринадцать" + "сорок пять" или "двадцать" + "два" + "ноль ноль")
-        // Пробуем жадно перебирать разбиение на (часы) и (минуты)
-        for (int split = 1; split < words.length; split++) {
-            StringBuilder hourPart = new StringBuilder();
-            for (int i = 0; i < split; i++) {
-                hourPart.append(words[i]).append(" ");
-            }
+        // 3. Маркеров нет.
+        // Сначала пробуем всю строку как часы ("двадцать один" -> 21:00).
+        int whole = parseNumber(timeStr.trim());
+        if (whole >= 0 && whole <= 23) {
+            return new int[]{whole, 0};
+        }
 
-            StringBuilder minutePart = new StringBuilder();
-            for (int i = split; i < words.length; i++) {
-                minutePart.append(words[i]).append(" ");
-            }
+        // 4. Иначе перебор разбиений от длинной часовой части к короткой.
+        for (int split = words.length - 1; split >= 1; split--) {
+            String hourPart = join(words, 0, split);
+            String minutePart = join(words, split, words.length);
 
-            int h = parseNumber(hourPart.toString().trim());
-            int m = parseNumber(minutePart.toString().trim());
+            int h = parseNumber(hourPart);
+            int m = parseNumber(minutePart);
 
             if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
                 return new int[]{h, m};
@@ -446,5 +465,14 @@ public class ReminderParser {
         }
 
         return null;
+    }
+
+    private static String join(String[] words, int from, int to) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = from; i < to; i++) {
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(words[i]);
+        }
+        return sb.toString();
     }
 }

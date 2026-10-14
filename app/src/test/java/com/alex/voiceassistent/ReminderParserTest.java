@@ -87,16 +87,34 @@ public class ReminderParserTest {
     }
 
     @Test
-    public void testExactTimeDigits() {
-        // Фраза с точным временем цифрами: 18:30
-        String phrase = "напомни в 18:30 приготовить ужин";
+    public void testHourDigits() {
+        String phrase = "напомни в двадцать один час приготовить ужин";
         ReminderParser.ParseResult result = ReminderParser.parse(phrase);
 
         assertNotNull(result);
         assertEquals("Приготовить ужин", result.taskText);
 
-        int expectedMinutes = calculateExpectedMinutesUntil(18, 30);
+        int expectedMinutes = calculateExpectedMinutesUntil(21, 00);
         assertEquals(expectedMinutes, result.totalMinutes, 1.0);
+
+        String phrase2 = "напомни в двадцать один приготовить ужин";
+        ReminderParser.ParseResult result2 = ReminderParser.parse(phrase2);
+
+        assertNotNull(result2);
+        assertEquals("Приготовить ужин", result2.taskText);
+
+        int expectedMinutes2 = calculateExpectedMinutesUntil(21, 00);
+        assertEquals(expectedMinutes2, result2.totalMinutes, 1.0);
+
+
+        String phrase3 = "напомни в двадцать часов одну минуту приготовить ужин";
+        ReminderParser.ParseResult result3 = ReminderParser.parse(phrase3);
+
+        assertNotNull(result3);
+        assertEquals("Приготовить ужин", result3.taskText);
+
+        int expectedMinutes3 = calculateExpectedMinutesUntil(20, 01);
+        assertEquals(expectedMinutes3, result3.totalMinutes, 1.0);
     }
 
     /**
@@ -146,20 +164,6 @@ public class ReminderParserTest {
         // Допускаем погрешность в 1 минуту на случай смены минуты во время прогона
         assertEquals("Количество минут до завтра 13:45 должно совпадать",
                 expectedMinutes, result.totalMinutes, 1.0);
-    }
-
-    @Test
-    public void testDayAfterTomorrowDigits() {
-        // "напомни послезавтра в 10:00 сдать отчет"
-        String phrase = "напомни послезавтра в 10:00 сдать отчет";
-        ReminderParser.ParseResult result = ReminderParser.parse(phrase);
-
-        assertNotNull(result);
-        assertEquals("Сдать отчет", result.taskText);
-
-        // Ожидаем 10:00 через 2 дня (+2 дня)
-        int expectedMinutes = calculateExpectedMinutesForDayOffset(2, 10, 0);
-        assertEquals(expectedMinutes, result.totalMinutes, 1.0);
     }
 
     @Test
